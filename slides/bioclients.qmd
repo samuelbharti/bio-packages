@@ -1,0 +1,513 @@
+---
+title: "bioclients"
+subtitle: "29 services, one shape"
+---
+
+## Four apps, four gnomAD clients
+
+::: {.bignums}
+::: {}
+4
+
+apps
+:::
+
+::: {}
+3
+
+gnomAD clients that disagreed
+:::
+
+::: {}
+2
+
+MyGene clients, one without batch
+:::
+:::
+
+::: {.walls}
+::: {.w1}
+chunk size
+
+25, 20, or unbounded
+:::
+
+::: {.w2}
+a missing gene
+
+NULL, NA row, or dropped
+:::
+
+::: {.w3}
+service down
+
+crash, NULL, or retry forever
+:::
+
+::: {.w4}
+the trap
+
+TTN resolved to TTR in two of them
+:::
+:::
+
+::: {.payoff}
+Same service, same author, three answers. That is not bad luck, that is a missing layer.
+:::
+
+::: notes
+ONE JOB: The duplication was real, and the copies disagreed in ways that
+changed results.
+
+SCRIPT: Before this package, the family of apps had three gnomAD clients
+and two MyGene clients. They disagreed about chunk sizes, about what a
+missing gene looks like, and about what happens when the service is down.
+Two of them quietly resolved TTN to TTR, because MyGene scores an alias of
+the wrong gene above the exact match. That is the origin story: one client
+per service, written once, with the traps written down.
+
+NUMBERS: 3 gnomAD copies, 2 MyGene copies.
+
+HONESTY: The apps are private. Say "in the family" and move on.
+
+MEME: none.
+
+CLOCK: leave by 0:50.
+
+IF ASKED: "Why not use an existing CRAN client per service?" Most exist
+for one service and return their own shape and their own error convention.
+The point here is one shape.
+:::
+
+## ![](../assets/logos/bioclients.svg){.titlelogo} 29 services
+
+::: {.pills}
+[MyGene]{} [gnomAD]{} [ClinVar]{} [MyVariant]{} [Ensembl VEP]{} [Ensembl REST]{} [VariantValidator]{} [ClinGen]{}
+[Open Targets]{.alt} [DGIdb]{.alt} [Pharos]{.alt} [CIViC]{.alt} [DISEASES]{.alt} [PanelApp]{.alt} [ClinGen validity]{.alt}
+[UniProt]{.ok} [ProtVar]{.ok} [AlphaFold]{.ok} [PDBe]{.ok} [STRING]{.ok}
+[GTEx]{.warm} [HPA]{.warm} [QuickGO]{.warm} [Reactome]{.warm}
+[HPO]{.mute} [Monarch]{.mute} [IMPC]{.mute} [Europe PMC]{.mute} [PubTator3]{.mute}
+:::
+
+::: {.bignums}
+::: {}
+29
+
+services
+:::
+
+::: {}
+134
+
+exported functions
+:::
+
+::: {}
+57
+
+stored fixtures
+:::
+
+::: {.zero}
+0
+
+Shiny dependencies
+:::
+:::
+
+::: {.payoff}
+Genes, variants, disease, protein, expression, phenotype, literature. One envelope for all of it.
+:::
+
+::: notes
+ONE JOB: Breadth, and the fact that every one of them returns the same
+envelope.
+
+SCRIPT: Twenty-nine services across gene identity, variants, disease and
+druggability, protein, expression, phenotype and literature. A hundred and
+thirty-four exported functions. Every one returns a biohttp envelope, so
+once you have read one client you have read them all. Fifty-seven stored
+response bodies test the parsers offline.
+
+NUMBERS: 29 services, 134 exports, 57 fixtures, 28 of 29 confirmed live at
+last check.
+
+HONESTY: Not on CRAN yet. r-universe and GitHub.
+
+MEME: none.
+
+CLOCK: leave by 1:40.
+
+IF ASKED: "Which one is not confirmed live?" Check the README status table
+before answering; it changes.
+:::
+
+## Client half, parser half
+
+![](../assets/diagrams/client-parser.svg){.nostretch width="92%" fig-align="center"}
+
+::: {.payoff}
+The parser is pure. The test suite runs without a network, and so can yours.
+:::
+
+::: notes
+ONE JOB: Every module is two functions, and the pure half is the one you
+test.
+
+SCRIPT: Each service module is two halves. The client builds the request,
+calls biohttp, hands the body to the parser, returns the envelope. It
+touches the network. The parser takes an already parsed body and returns a
+tibble or NULL. It never touches the network, which means it is tested
+against a stored response body, and the whole suite runs offline.
+
+NUMBERS: 2 halves per module.
+
+HONESTY: Read fixtures with simplifyVector FALSE. The parsers expect the
+nested list shape, not the data frames jsonlite guesses at.
+
+MEME: none.
+
+CLOCK: leave by 2:20.
+
+IF ASKED: "How do you keep fixtures current?" A gated live test file runs
+against the real services on demand and flags a shape change.
+:::
+
+## Nothing found is an answer
+
+```r
+mygene_gene("NOTAREALGENE123")$status
+#> [1] "no_data"
+
+mygene_gene("TP53")$status
+#> [1] "ok"
+```
+
+::: {.cards}
+::: {.teal}
+`no_data`
+
+The service was reached. It has nothing for this query. Show "not found".
+:::
+
+::: {.orange}
+`error`, `timeout`
+
+The service was not reached, or failed. Show "try again", not "not found".
+:::
+
+::: {}
+`skipped`
+
+We did not ask. The host is paused. Say so.
+:::
+:::
+
+::: {.payoff}
+A UI that says "not found" during an outage is lying to the user.
+:::
+
+::: notes
+ONE JOB: Distinguish "the service has nothing" from "the service is down",
+because the UI must say different things.
+
+SCRIPT: A symbol that resolves to nothing comes back no_data. The service
+was reached and said so. When the service is down you get error or timeout,
+and when the breaker is open you get skipped. The hand rolled client
+returned NULL for all three, and the UI said not found during every outage.
+
+NUMBERS: 3 statuses that used to be one NULL.
+
+HONESTY: None.
+
+MEME: none.
+
+CLOCK: leave by 3:00.
+
+IF ASKED: "Is no_data cached?" The transport response is, a 200 with an
+empty body. The client turns it into no_data on every replay.
+:::
+
+## One row per input, in input order
+
+```r
+mygene_genes(c("TP53", "NOTAREALGENE123", "BRAF"))$data
+#>   symbol           name                            entrez ensembl_gene
+#>   TP53             tumor protein p53               7157   ENSG00000141510
+#>   NOTAREALGENE123  NA                              NA     NA
+#>   BRAF             B-Raf proto-oncogene            673    ENSG00000157764
+```
+
+::: {.walls .g2}
+::: {.w3}
+the contract
+
+N inputs, N rows, same order. A miss is an NA row in place.
+:::
+
+::: {.w1}
+what it prevents
+
+A two row table shifts BRAF onto the second input. Every join after that is wrong.
+:::
+:::
+
+::: {.payoff}
+Every batch function in the package keeps this. Zip results onto your input by position.
+:::
+
+::: notes
+ONE JOB: A batch never drops a row, because a shorter table silently
+shifts everything after the gap.
+
+SCRIPT: The batch functions are why the package is worth installing: three
+symbols is one round trip. The contract is one row per input, in input
+order. The middle row here is NA, not missing. A table with two rows would
+have put BRAF on the second input and every join downstream would be wrong
+without an error anywhere.
+
+NUMBERS: 3 in, 3 out.
+
+HONESTY: A failed chunk in a long list yields NA rows for that chunk, not
+a failed call, unless every chunk failed.
+
+MEME: none.
+
+CLOCK: leave by 3:40.
+
+IF ASKED: "Why not return only the hits and a list of misses?" Because
+every caller then re-implements the join, and one of them gets it wrong.
+:::
+
+## Traps, written down
+
+::: {.cards .c4}
+::: {.orange}
+TTN vs TTR
+
+MyGene scores the alias higher. Exact symbol match wins.
+:::
+
+::: {.orange}
+`HGNC` is upper case
+
+Every other MyGene field is lower case. Asking for `hgnc` returns nothing.
+:::
+
+::: {.orange}
+25 aliases
+
+gnomAD's cost cap. Chunk at 20. Re-verified 2026-08-30.
+:::
+
+::: {.orange}
+Reactome is a bare array
+
+A parser reaching for a `results` key reports every gene as pathway free.
+:::
+:::
+
+```r
+# from R/mygene.R
+#  "This is the single most important thing in this file."
+mygene_pick_hit(hits, "TTN")$entrezgene
+#> [1] "7273"
+```
+
+::: {.payoff}
+Each trap has a comment with a date, and a test that pins it.
+:::
+
+::: notes
+ONE JOB: The value of the package is as much the traps it remembers as
+the requests it makes.
+
+SCRIPT: Four of the traps. MyGene ranks an alias of the wrong gene above
+the exact symbol, so the client prefers an exact match. MyGene names one
+field HGNC in upper case and every other field lower case. gnomAD's limit
+is a query cost, and the verified ceiling is 25 aliases, so the client
+chunks at 20. Reactome answers with a bare array. Each of these is a comment
+in the source with the date it was verified, and a test.
+
+NUMBERS: 25 alias cap, chunk 20, verified 2026-08-30.
+
+HONESTY: Quote the date. Limits change.
+
+MEME: none.
+
+CLOCK: leave by 4:30.
+
+IF ASKED: "What about MyVariant?" Its default is hg19. The client asks
+for hg38 explicitly. That is trap five.
+:::
+
+## Limits are hard coded where they were verified
+
+```r
+vep_default_throttle()
+#> $capacity 1   $fill_time_s 1
+
+bioclients:::clinvar_throttle()
+#> $capacity 3   $fill_time_s 1        # 10 with NCBI_API_KEY
+
+clinvar_classification(term)
+# throttle = clinvar_throttle(), secret_query = list(api_key = NCBI_API_KEY)
+```
+
+::: {.flow}
+::: {}
+throttle
+
+the service's documented rate, as the default
+:::
+
+::: {}
+`secret_query`
+
+the key attached at dispatch only
+:::
+
+::: {}
+never in the cache key
+
+never in a printed request
+:::
+:::
+
+::: {.payoff}
+A caller who has not read the service docs still behaves.
+:::
+
+::: notes
+ONE JOB: The rate limits and the credential handling are defaults, not
+homework for the caller.
+
+SCRIPT: NCBI allows three requests a second, ten with a key. VEP asks for
+one. ClinGen was measured at three. Each client carries its own default.
+The key itself goes through secret_query, which attaches it at dispatch, so
+it is never part of the cache key and never appears in a printed request or
+an error message.
+
+NUMBERS: ClinVar 3/s or 10/s, VEP 1/s, ClinGen 3/s.
+
+HONESTY: These are not called live in the talk. They are slow by design.
+
+MEME: none.
+
+CLOCK: leave by 5:10.
+
+IF ASKED: "Can I override a throttle?" Yes, every client passes dots
+through to biohttp. Pass throttle NULL at your own risk.
+:::
+
+## Chaining sources
+
+```r
+res <- mygene_gene("TP53")
+uniprot_diseases(res$data$uniprot)$data
+#>   name                    acronym mim     causal
+#>   Li-Fraumeni syndrome    LFS     151623  TRUE
+#>   ...
+
+opentargets_gene_diseases(res$data$ensembl_gene, size = 3)
+```
+
+::: {.cards}
+::: {}
+Open Targets takes an Ensembl id
+
+Resolve the symbol first. The client will not do it for you.
+:::
+
+::: {.teal}
+on purpose
+
+A client that silently calls a second service makes a MyGene outage look like an Open Targets outage.
+:::
+
+::: {.green}
+`causal`
+
+"caused by variants" versus "may be involved". Both arrive as disease comments.
+:::
+:::
+
+::: {.payoff}
+One call, one service, one envelope. Composition happens in your code, where you can see it.
+:::
+
+::: notes
+ONE JOB: Clients do not hide a second call to a different service, so a
+failure always names the service that failed.
+
+SCRIPT: Open Targets wants an Ensembl id, so you resolve the symbol through
+MyGene first. The client does not do that for you, deliberately. If it did,
+a MyGene outage would surface as an Open Targets failure and you would debug
+the wrong service. The UniProt example shows a parser decision: causal is
+read from the note text, because "caused by variants" and "may be involved"
+are different claims that arrive in the same field.
+
+NUMBERS: 2 calls, 2 envelopes.
+
+HONESTY: None.
+
+MEME: none.
+
+CLOCK: leave by 5:50.
+
+IF ASKED: "Why a Boolean for causal?" So a review can filter on it. The
+note text is still in the tibble.
+:::
+
+## Start here
+
+::: {.columns .smallish}
+::: {.column width="50%"}
+[not on CRAN yet]{.chip .wip}
+
+```r
+pak::pak("samuelbharti/bioclients/pkg-r")
+```
+
+```r
+install.packages("bioclients",
+  repos = "https://samuelbharti.r-universe.dev")
+```
+
+The `/pkg-r` suffix is mandatory.
+:::
+
+::: {.column width="50%"}
+**Try it in a minute**
+
+```r
+library(bioclients)
+res <- mygene_genes(c("TP53", "BRAF", "MLL"))
+res$status
+res$data
+```
+
+Docs: `samuelbharti.com/bioclients`
+:::
+:::
+
+::: notes
+ONE JOB: Say it is not on CRAN, give the install line, and warn about the
+suffix.
+
+SCRIPT: Not on CRAN yet. Install from r-universe or from GitHub, and the
+package lives in the pkg-r folder of the repo, so that suffix is not
+optional. Then run mygene_genes on a list and look at the status before
+the data.
+
+NUMBERS: version 0.1.1.
+
+HONESTY: Do not promise a CRAN date.
+
+MEME: none.
+
+CLOCK: done by 6:30.
+
+IF ASKED: "Python?" Not planned. biobouncer is the cross language one; this
+is R, built on httr2.
+:::

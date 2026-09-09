@@ -1,0 +1,548 @@
+---
+title: "biohttp"
+subtitle: "A call returns a value. It never raises."
+---
+
+## The soup this replaces
+
+```r
+fetch_gene <- function(symbol) {
+  url <- paste0("https://mygene.info/v3/query?q=", symbol)
+  tryCatch(
+    {
+      body <- jsonlite::fromJSON(url)
+      if (length(body$hits) == 0) return(NULL)
+      body$hits[1, ]
+    },
+    error = function(e) NULL
+  )
+}
+```
+
+::: {.walls}
+::: {.w1}
+no such gene
+
+NULL
+:::
+
+::: {.w2}
+network down
+
+NULL
+:::
+
+::: {.w3}
+HTTP 503
+
+NULL
+:::
+
+::: {.w4}
+body was HTML
+
+NULL
+:::
+:::
+
+::: {.payoff}
+NULL erases why. A cache of NULLs poisons itself.
+:::
+
+::: notes
+ONE JOB: The hand rolled client throws away the one thing the caller needs,
+which is the reason.
+
+SCRIPT: This is a lightly edited copy of a function from one of my apps.
+Four different things produce that NULL: the gene does not exist, the
+network is down, the service returned a 503, the body was an HTML
+maintenance page. The UI says not found for all four. And the first time
+somebody wraps this in a cache, the cache stores the NULL and keeps saying
+not found after the outage ends.
+
+NUMBERS: 4 causes, 1 NULL.
+
+HONESTY: Not a strawman. I wrote it.
+
+MEME: none.
+
+CLOCK: leave by 0:50.
+
+IF ASKED: "Isn't httr2 enough?" httr2 is the engine here. biohttp is the
+policy on top: what gets cached, what trips the breaker, what a failure looks
+like to the caller.
+:::
+
+## ![](../assets/logos/biohttp.svg){.titlelogo} The one rule
+
+::: {.kicker}
+A call returns a value. It never raises.
+:::
+
+![](../assets/diagrams/envelope-flow.svg){.nostretch width="90%" fig-align="center"}
+
+::: notes
+ONE JOB: Four different outcomes on the wire, one shape back, every time.
+
+SCRIPT: Whatever happens on the wire, the caller gets the same envelope. A
+transport failure, a non-2xx, a 2xx whose body will not parse, and a real
+answer all come back as a list with the same fields. There is no tryCatch
+at the call site because there is nothing to catch. You branch on status.
+
+NUMBERS: 4 outcomes, 1 envelope, 9 fields.
+
+HONESTY: biohttp knows nothing about biology. It never will.
+
+MEME: none.
+
+CLOCK: leave by 1:40.
+
+IF ASKED: "What about a parse error in my own code?" That is your bug, and
+it should raise. The rule is about the transport, not your parser.
+:::
+
+## Nine fields
+
+| field | what it holds |
+|---|---|
+| `ok` | TRUE only when status is `ok`. Derived. |
+| `status` | one of seven. What you branch on. |
+| `http` | the code, or NA when nothing arrived |
+| `data` | the parsed body on success |
+| `error` | one sentence for the user |
+| `detail` | the technical cause, for the log |
+| `retry_after` | seconds the service asked you to wait |
+| `source`, `ts` | who answered, when |
+
+::: {.payoff}
+`error` goes on screen. `detail` goes in the log. Never the other way round.
+:::
+
+::: notes
+ONE JOB: The user-facing sentence and the technical cause are separate
+fields, so neither ever leaks into the wrong place.
+
+SCRIPT: Nine fields. ok is derived from status so the two cannot disagree.
+The split I care most about is error versus detail. Error is a sentence fit
+for a user: MyGene is temporarily unavailable. Detail is the cause: MyGene
+returned HTTP 503. Render one, log the other, and a stack trace never reaches
+a bench scientist while your log never loses one.
+
+NUMBERS: 9 fields.
+
+HONESTY: retry_after is new in 0.1.3. On CRAN 0.1.2 the envelope has eight.
+
+MEME: none.
+
+CLOCK: leave by 2:30.
+
+IF ASKED: "Why source in the envelope?" So the error sentence names the
+service without the caller formatting it.
+:::
+
+## Seven statuses
+
+::: {.pills .big}
+[ok]{.ok} [no_data]{.alt} [stale]{.alt} [rate_limited]{.warm} [timeout]{.warm} [skipped]{.mute} [error]{.warm}
+:::
+
+::: {.cards}
+::: {.teal}
+`no_data`
+
+An answer, not a fault. The source was reached and has nothing.
+:::
+
+::: {}
+`skipped`
+
+Nothing was sent. The host is paused. Evidence about the host, not the query.
+:::
+
+::: {.teal}
+`stale`
+
+Real data, past its freshness window. `ok` is FALSE so it never gets cached.
+:::
+:::
+
+::: {.payoff}
+Three of the seven are the ones a hand rolled client collapses into "failed".
+:::
+
+::: notes
+ONE JOB: no_data and skipped are answers about different things, and
+telling them apart is why the enum exists.
+
+SCRIPT: Seven levels, best to worst. The three people miss: no_data means
+the service said there is nothing here, which is information. Skipped means
+we did not ask, because the host is paused, which says nothing about your
+query. Stale means we have data but it is old. A hand rolled client folds
+all three into failed, and the UI shows the wrong message.
+
+NUMBERS: 7 statuses.
+
+HONESTY: stale is a constructor for client code to use; the transport
+itself never emits it.
+
+MEME: none.
+
+CLOCK: leave by 3:20.
+
+IF ASKED: "Is a 404 always no_data?" For a lookup API, yes. For a
+misconfigured URL it would also be no_data, which is a bug you will see in
+detail.
+:::
+
+## Branching
+
+```r
+switch(res$status,
+  ok           = render_table(res$data),
+  no_data      = "Nothing found for that query.",
+  skipped      = "Source paused, try again shortly.",
+  rate_limited = paste("Slow down, retry in", res$retry_after, "s"),
+  res$error
+)
+```
+
+::: {.flow}
+::: {}
+handle what you can act on
+
+ok, no_data, skipped, rate_limited
+:::
+
+::: {}
+let the rest fall through
+
+`res$error` is already a sentence
+:::
+
+::: {}
+`body_or_null()`
+
+When you honestly do not care why
+:::
+:::
+
+::: {.payoff}
+Every branch is testable offline with one mocked response.
+:::
+
+::: notes
+ONE JOB: Branching on status is one switch, and the default branch is
+already a sentence.
+
+SCRIPT: This is the whole call site. A switch on status. Handle the cases
+you have a UI for, and let the rest fall through to res dollar error, which
+is already fit to show. body_or_null collapses the envelope to the body or
+NULL for the cases where the failure is genuinely not actionable. Reach for
+it to save typing, not to avoid reading the envelope.
+
+NUMBERS: 1 switch.
+
+HONESTY: None.
+
+MEME: none.
+
+CLOCK: leave by 4:00.
+
+IF ASKED: "How do I test the branches?" httr2 with_mocked_responses, one
+status code per test. The tutorial produces all seven in one chunk.
+:::
+
+## The breaker rule
+
+::: {.verbatim}
+"Only a transport failure counts against a host. Any HTTP response at all,
+including a 500 and including a 200 whose body will not parse, proves the
+host is reachable and clears the count."
+
+[from the biohttp vignette]{.src}
+:::
+
+::: {.bignums}
+::: {}
+3
+
+failures to open
+:::
+
+::: {}
+120
+
+seconds cooldown
+:::
+
+::: {.zero}
+0
+
+requests while open
+:::
+:::
+
+::: {.payoff}
+A 503 proves the host is up. Taking it out of rotation turns a partial outage into a total one.
+:::
+
+::: notes
+ONE JOB: A 500 must not trip the breaker, and this is the rule hand rolled
+breakers most often get wrong.
+
+SCRIPT: After three consecutive transport failures a host is skipped for
+two minutes. The rule that matters is what counts as a failure. Only a
+transport failure: DNS, refused, timed out. Any HTTP response, a 500, a 200
+carrying garbage, proves the host is reachable and clears the count. A
+service returning error pages is broken, but it is up, and taking it out of
+rotation turns a partial outage into a total one.
+
+NUMBERS: 3 failures, 120 s, both configurable by env var.
+
+HONESTY: It heals by itself. breaker_reset exists for tests and demos.
+
+MEME: none.
+
+CLOCK: leave by 4:50.
+
+IF ASKED: "Per host or per URL?" Per host. One dead endpoint on a live
+host does not pause the host.
+:::
+
+## Success-only cache
+
+::: {.columns}
+::: {.column width="48%"}
+**Stored**
+
+- a 2xx that parsed
+
+**Never stored**
+
+- timeout, refused, 5xx
+- `no_data` from a 404
+- `stale`, `skipped`
+
+Failures are fetched again every time.
+:::
+
+::: {.column width="52%"}
+| variable | default |
+|---|---|
+| `BIOHTTP_CACHE_TTL` | 1800 s |
+| `BIOHTTP_CACHE_DISK` | off |
+| `BIOHTTP_CACHE_DIR` | `R_user_dir()` |
+| `BIOHTTP_CACHE_DISK_TTL` | 7 days |
+| `BIOHTTP_CACHE_SALT` | empty |
+
+Per call: `ttl = 86400` for a bulk table.
+:::
+:::
+
+::: {.payoff}
+Disk tier on, salt fixed, TTL long: a committed cache replays a whole demo offline.
+:::
+
+::: notes
+ONE JOB: Only successes are cached, and with the disk tier and a fixed
+salt, the cache is a reproducibility tool.
+
+SCRIPT: A cache that stores a failure poisons itself for the life of the
+process. So biohttp never does. Memory by default, disk opt in through
+environment variables, because a library should not start writing to your
+disk because you installed it. This repo turns the disk tier on, points it
+inside the project, fixes the salt, sets the lifetime to a year, and commits
+the directory. Every tutorial and the app replay from it with the network
+off.
+
+NUMBERS: 7 variables; 30 min default TTL; 7 day disk ceiling.
+
+HONESTY: A year long TTL is a demo device. In production use the defaults.
+
+MEME: none.
+
+CLOCK: leave by 5:40.
+
+IF ASKED: "What is the salt for?" It is in the cache key. A shared disk
+cache without one collides across app versions and leaks which queries ran.
+:::
+
+## Many questions, one host
+
+```r
+transport_stats_reset()
+res <- get_json_many(
+  "https://mygene.info/v3", path = "query",
+  queries = lapply(c("BRCA1", "TP53", "EGFR"), \(g) list(q = g)),
+  source = "MyGene",
+  throttle = list(capacity = 10, fill_time_s = 60)
+)
+transport_stats()
+#>          host dispatched retried rate_limited
+#>   mygene.info          3       0            0
+```
+
+::: {.flow}
+::: {}
+serve from cache
+
+what is already held
+:::
+
+::: {}
+send the rest
+
+grouped by host, throttled
+:::
+
+::: {}
+retry only the retryable
+
+429, timeout, 5xx; honour Retry-After
+:::
+
+::: {}
+`transport_stats()`
+
+what actually went out
+:::
+:::
+
+::: {.payoff}
+Results come back in the order you asked. Zip them onto your input by position.
+:::
+
+::: notes
+ONE JOB: A gene list is one batch, not N calls, and you can see exactly
+what went over the wire.
+
+SCRIPT: Most clients ask many questions of one source. The many variants
+take a list, serve what the cache holds, send only the rest, grouped by host
+and throttled, and retry only the entries that came back retryable, waiting
+what Retry-After asked for. transport_stats tells you what was actually
+dispatched, which is the number you want in a log after a big run.
+
+NUMBERS: 3 queries, 1 host.
+
+HONESTY: Batched retry, Retry-After and transport_stats are 0.1.3. On CRAN
+0.1.2, max_tries on the batched functions does nothing.
+
+MEME: none.
+
+CLOCK: leave by 6:30.
+
+IF ASKED: "Different hosts at once?" That is process level concurrency,
+which belongs in the app. httr2 throttles across the whole list, so a mixed
+list would make one host wait on another.
+:::
+
+## Testing: mocks, and one real server
+
+::: {.walls .g2}
+::: {.w3}
+`httr2::with_mocked_responses()`
+
+Every status but one. One response object per test. Runs anywhere.
+
+statuses, branching, cache rules
+:::
+
+::: {.w1}
+`webfakes`
+
+Retry needs a real socket, because mocks sit below the retry loop.
+
+retry, timeout, Retry-After, breaker
+:::
+:::
+
+```r
+httr2::with_mocked_responses(
+  list(httr2::response(status_code = 503)),
+  expect_identical(mygene_query("BRCA1")$status, "error")
+)
+```
+
+::: {.payoff}
+Worth asserting: a failure is never cached, a 5xx never trips the breaker, a token never prints.
+:::
+
+::: notes
+ONE JOB: The whole suite runs offline, and you know which tool to reach for.
+
+SCRIPT: Two tools. For everything except retry, a mocked response is
+enough: one status code, one assertion. Retry is the exception because
+mocking replaces the transport below the retry loop, so a mocked 503 arrives
+once no matter what max_tries says. For that, webfakes runs a real local
+server in a second process. Still offline, still deterministic. The three
+things worth asserting in your own suite are on the payoff line, because
+they are the three that quietly regress.
+
+NUMBERS: 2 tools.
+
+HONESTY: biohttp's own suite never touches a real host.
+
+MEME: none.
+
+CLOCK: leave by 7:10.
+
+IF ASKED: "Does webfakes need a network?" No. It binds localhost.
+:::
+
+## Start here
+
+::: {.columns .smallish}
+::: {.column width="50%"}
+[CRAN 0.1.2]{.chip .public}
+
+```r
+install.packages("biohttp")
+```
+
+[r-universe 0.1.3]{.chip .internal}
+
+```r
+install.packages("biohttp",
+  repos = "https://samuelbharti.r-universe.dev")
+```
+
+0.1.3 adds `retry_after`, batched retry, `ratelimit_*()`, `transport_stats()`.
+:::
+
+::: {.column width="50%"}
+**Write a client in six lines**
+
+```r
+mygene_query <- function(symbol) {
+  res <- get_json("https://mygene.info/v3",
+    path = "query", query = list(q = symbol),
+    source = "MyGene")
+  if (!res$ok) return(res)
+  status_ok(pluck_at(res$data, "hits"), "MyGene")
+}
+```
+
+No Shiny dependency, on purpose. The app is the caller.
+:::
+:::
+
+::: notes
+ONE JOB: Say the two version numbers out loud, once, and hand them a
+six line client.
+
+SCRIPT: CRAN has 0.1.2. Everything I showed with retry_after and
+transport_stats is 0.1.3, on r-universe, heading to CRAN. A client on top
+of it is six lines with no error handling, because there is nothing to
+handle.
+
+NUMBERS: 0.1.2 on CRAN, 0.1.3 on r-universe, 14 recursive dependencies.
+
+HONESTY: Do not say when 0.1.3 lands on CRAN.
+
+MEME: none.
+
+CLOCK: done by 7:45.
+
+IF ASKED: "Why no Shiny in Suggests?" So it can be a dependency of a
+package that has nothing to do with Shiny.
+:::
