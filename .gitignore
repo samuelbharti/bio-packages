@@ -43,8 +43,10 @@ uv.lock
 # Shiny deploy metadata
 app/rsconnect/
 
-# Working notes and plans live here and never leave the machine
+# Working notes, plans and assistant config never leave the machine
 docs/local/
+CLAUDE.md
+.claude/
 
 # Transient
 *.part
