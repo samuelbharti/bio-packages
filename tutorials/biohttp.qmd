@@ -1,0 +1,470 @@
+---
+title: "biohttp: a call returns a value"
+subtitle: "One transport layer for R clients of biological web services"
+---
+
+```{r}
+#| label: setup
+#| message: false
+source(here::here("R", "demo-env.R"))
+library(biohttp)
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+options(httr2_progress = FALSE)
+packageVersion("biohttp")
+```
+
+biohttp knows how to make an HTTP call and report what happened. It does not
+know what a gene is. Everything it does is in service of one rule:
+
+**A call returns a value. It never raises.**
+
+A DNS failure, a 503, a 200 carrying an HTML maintenance page, a host you
+have already given up on: all four come back as a value you branch on. There
+is no `tryCatch()` in this document, and there is none in the packages built
+on top of it.
+
+## 1. The soup this replaces
+
+This is what a hand rolled client looks like in most Shiny apps. It is not a
+strawman; it is a lightly edited copy of one I wrote.
+
+```r
+fetch_gene <- function(symbol) {
+  url <- paste0("https://mygene.info/v3/query?q=", symbol)
+  tryCatch(
+    {
+      body <- jsonlite::fromJSON(url)
+      if (length(body$hits) == 0) return(NULL)
+      body$hits[1, ]
+    },
+    error = function(e) NULL
+  )
+}
+```
+
+That `NULL` means four different things: the gene does not exist, the
+network is down, MyGene returned a 503, or the body was not JSON. The caller
+cannot tell them apart, so the UI says "not found" for all four. Worse, if
+someone wraps this in a cache, the cache stores the `NULL` and keeps serving
+"not found" after the outage ends.
+
+## 2. The one rule
+
+```{r}
+res <- get_json(
+  "https://mygene.info/v3",
+  path = "gene/7157",
+  query = list(fields = "symbol,name,taxid"),
+  source = "MyGene"
+)
+res$ok
+res$status
+res$data$symbol
+```
+
+That call was served from the disk cache committed with this repo, which is
+why it works with the network off. Section 9 shows the evidence.
+
+## 3. What comes back
+
+Every call returns the same fields, whatever happened.
+
+```{r}
+str(res[c("ok", "status", "http", "source", "error", "detail", "retry_after", "ts")])
+```
+
+| Field | What it holds |
+|---|---|
+| `ok` | `TRUE` only when `status` is `"ok"`. Derived, so the two cannot disagree. |
+| `status` | One of seven levels. This is what you branch on. |
+| `http` | The HTTP code, or `NA` when no response arrived. |
+| `data` | The parsed body on success. |
+| `source` | The label you passed, used in the message. |
+| `error` | One sentence fit to show a user. |
+| `detail` | The technical cause, for a log. Never shown to a user. |
+| `retry_after` | Seconds the service asked you to wait, from a 429 or 503. |
+| `ts` | When the envelope was built. |
+
+`error` goes in the UI. `detail` goes in the log. A stack trace never reaches
+a user, and the log never loses one.
+
+## 4. The seven statuses, all of them, offline
+
+```{r}
+STATUS_LEVELS
+```
+
+`httr2::with_mocked_responses()` replaces the transport, so every HTTP
+outcome can be produced on demand. `perform()` is the layer under
+`get_json()`; it takes a request and a source label and returns an envelope.
+
+```{r}
+mock <- function(code) {
+  httr2::with_mocked_responses(
+    list(httr2::response(status_code = code)),
+    perform(
+      req_defaults(httr2::request("https://mock.test/x"), max_tries = 1),
+      "Mock"
+    )
+  )
+}
+statuses <- rbind(
+  data.frame(http = 200L, status = mock(200)$status),
+  data.frame(http = 404L, status = mock(404)$status),
+  data.frame(http = 429L, status = mock(429)$status),
+  data.frame(http = 408L, status = mock(408)$status),
+  data.frame(http = 503L, status = mock(503)$status)
+)
+statuses
+```
+
+Two more do not come from an HTTP code. `stale` is a value the client
+decides on, for data it holds but no longer trusts:
+
+```{r}
+status_stale(data = list(n = 1), source = "Mock")$status
+```
+
+`skipped` means nothing was sent, because the host is paused. Section 8
+produces one.
+
+The three people miss:
+
+- **`no_data`** is an answer, not a fault. The source was reached and has
+  nothing for this query. A 404 from a lookup API means "no such record",
+  which is information.
+- **`skipped`** is not evidence about the query, only about the host.
+- **`stale`** carries real data that is past its freshness window.
+
+## 5. Branching
+
+Handle the cases you can act on and let the rest fall through.
+
+```{r}
+render <- function(res) {
+  switch(
+    res$status,
+    ok = paste("got", length(res$data), "fields"),
+    no_data = "nothing found for that query",
+    skipped = "source paused, try again shortly",
+    rate_limited = paste("slow down, retry in", res$retry_after, "s"),
+    res$error
+  )
+}
+render(status_ok(data = list(a = 1, b = 2), source = "MyGene"))
+render(status_no_data(source = "MyGene"))
+render(status_error(source = "MyGene", http = 503L))
+render(status_rate_limited(source = "MyGene", retry_after = 30))
+```
+
+If you genuinely do not care why a call failed, `body_or_null()` collapses
+it. Reach for that when the failure is not actionable, not to avoid reading
+the envelope.
+
+```{r}
+body_or_null(status_ok(data = list(n = 1)))
+body_or_null(status_error(source = "MyGene"))
+```
+
+## 6. Retry needs a real server
+
+Mocking replaces the transport below the retry loop, so a mocked 503 is
+delivered once no matter what `max_tries` says. To show retry, run a real
+local server. `webfakes` gives you one in a second process, so this is still
+offline and still deterministic.
+
+```{r}
+#| label: fake-server
+app <- webfakes::new_app()
+app$locals$flaky <- 0L
+
+# Fails twice, then succeeds.
+app$get("/flaky", function(req, res) {
+  req$app$locals$flaky <- req$app$locals$flaky + 1L
+  n <- req$app$locals$flaky
+  res$set_status(if (n < 3L) 503L else 200L)$send_json(
+    list(attempts = n),
+    auto_unbox = TRUE
+  )
+})
+app$get("/count", function(req, res) {
+  res$send_json(list(flaky = req$app$locals$flaky), auto_unbox = TRUE)
+})
+app$get("/slow", function(req, res) {
+  Sys.sleep(3)
+  res$send_json(list(ok = TRUE), auto_unbox = TRUE)
+})
+app$get("/limited", function(req, res) {
+  res$set_status(429L)$set_header("Retry-After", "1")$send_json(
+    list(error = "too many requests"),
+    auto_unbox = TRUE
+  )
+})
+app$get("/broken", function(req, res) {
+  res$set_status(503L)$send_json(list(error = "down"), auto_unbox = TRUE)
+})
+fake <- webfakes::new_app_process(app)
+fake$url()
+```
+
+```{r}
+res <- perform(
+  req_defaults(httr2::request(fake$url("/flaky")), max_tries = 4, timeout = 10),
+  "Flaky"
+)
+res$status
+res$data$attempts
+```
+
+Three attempts, one answer, no code at the call site.
+
+## 7. Timeout and rate limit, live
+
+`/slow` takes three seconds. With a one second budget, the envelope says
+`timeout` and `http` is `NA`, because no response arrived.
+
+```{r}
+slow <- get_json(fake$url(), path = "slow", source = "Slow", timeout = 1, max_tries = 1)
+slow$status
+slow$http
+slow$error
+```
+
+`/limited` answers 429 with a `Retry-After` header. The envelope reads it,
+so the caller knows how long to wait instead of guessing.
+
+```{r}
+lim <- get_json(fake$url(), path = "limited", source = "Limited", max_tries = 1)
+lim$status
+lim$retry_after
+```
+
+In a batch, that header is honoured automatically: the retry pass waits the
+time asked for before re-sending only the requests that were rate limited.
+`retry_after` and the batched retry are biohttp 0.1.3; CRAN 0.1.2 accepts
+`max_tries` on the batched functions and does nothing with it.
+
+## 8. The circuit breaker
+
+After three consecutive transport failures, a host is skipped for a cooldown
+rather than waited on. Nothing listens on port 9, so each call fails at the
+socket.
+
+```{r}
+dead <- "http://localhost:9"
+for (i in 1:3) {
+  r <- get_json(dead, path = "x", source = "Dead", timeout = 2, max_tries = 1)
+  cat(i, r$status, "\n")
+}
+breaker_open("localhost")
+```
+
+The fourth call sends nothing. It comes back in microseconds with a status
+that says so.
+
+```{r}
+r <- get_json(dead, path = "x", source = "Dead", timeout = 2, max_tries = 1)
+r$status
+r$error
+```
+
+The rule that matters, and the one a hand rolled breaker most often gets
+wrong: **only a transport failure counts against a host**. A 503 proves the
+host is reachable, so it must not open the breaker. A source returning error
+pages is broken, but it is up, and taking it out of rotation would turn a
+partial outage into a total one.
+
+```{r}
+b <- get_json(fake$url(), path = "broken", source = "Broken", max_tries = 1)
+b$status
+breaker_open("127.0.0.1")
+```
+
+The breaker heals after the cooldown on its own. `breaker_reset()` exists for
+tests and for demos.
+
+```{r}
+breaker_reset()
+breaker_open("localhost")
+```
+
+## 9. Caching, and what is never cached
+
+Successes are cached. Failures never are. That second half is why the soup
+in section 1 was dangerous: a cache that stores a failure poisons itself for
+the life of the process.
+
+The MyGene call in section 2 came from disk. Call it again: same data, and
+no time spent waiting on a socket.
+
+```{r}
+again <- get_json(
+  "https://mygene.info/v3",
+  path = "gene/7157",
+  query = list(fields = "symbol,name,taxid"),
+  source = "MyGene"
+)
+identical(res$data, again$data)
+system.time(get_json(
+  "https://mygene.info/v3",
+  path = "gene/7157",
+  query = list(fields = "symbol,name,taxid"),
+  source = "MyGene"
+))[["elapsed"]]
+```
+
+A failure is fetched again every time. Count how often the mock is hit.
+
+```{r}
+hits <- 0L
+always_503 <- function(req) {
+  hits <<- hits + 1L
+  httr2::response(status_code = 503)
+}
+httr2::with_mocked_responses(always_503, {
+  first <- get_json("https://mock.test", path = "fail", source = "Mock", max_tries = 1)
+  second <- get_json("https://mock.test", path = "fail", source = "Mock", max_tries = 1)
+})
+c(first$status, second$status)
+hits
+```
+
+Two calls, two fetches. Had the 503 been cached, the second would have been
+served without asking.
+
+The cache is memory only by default. The disk tier is opt in, through
+environment variables, because a library should not start writing to
+somebody's disk because they installed it.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `BIOHTTP_CACHE_TTL` | 1800 | Lifetime of an entry, seconds |
+| `BIOHTTP_CACHE_MAX_SIZE` | 256 MB | Memory tier ceiling, bytes |
+| `BIOHTTP_CACHE_MAX_N` | unlimited | Memory tier ceiling, entries |
+| `BIOHTTP_CACHE_DISK` | off | Set to `true` to add the disk tier |
+| `BIOHTTP_CACHE_DIR` | `R_user_dir("biohttp", "cache")` | Disk tier location |
+| `BIOHTTP_CACHE_DISK_TTL` | 7 days | Disk tier max age, seconds |
+| `BIOHTTP_CACHE_SALT` | empty | Set per deployment |
+
+This repo sets all of them in `R/demo-env.R`: the directory is inside the
+project, both lifetimes are a year, and the salt is fixed. That is what makes
+a committed cache replay. Per call, `ttl = 86400` keeps a bulk table for a
+day without changing the default for everything else.
+
+## 10. Many questions to one source
+
+A gene list is many questions to one host. `get_json_many()` takes a list of
+queries, serves what the cache holds, sends only the rest, and returns
+envelopes in the order asked.
+
+```{r}
+transport_stats_reset()
+many <- get_json_many(
+  "https://mygene.info/v3",
+  path = "query",
+  queries = lapply(
+    c("BRCA1", "TP53", "EGFR"),
+    function(g) list(q = g, fields = "symbol,entrezgene", size = 1)
+  ),
+  source = "MyGene",
+  throttle = list(capacity = 10, fill_time_s = 60)
+)
+vapply(many, function(r) r$status, character(1))
+vapply(many, function(r) r$data$hits[[1]]$symbol, character(1))
+```
+
+`transport_stats()` reports what the batched path actually sent, per host.
+Every one of those three was in the cache, so nothing went out.
+
+```{r}
+transport_stats()
+```
+
+Pass a `throttle`. httr2 will happily flood a host in parallel, and public
+biological services run on a research budget. The mechanism is the package's;
+the numbers are yours, because only you know what the service asks for.
+
+## 11. Credentials
+
+A token goes in a header, never in the URL. It is redacted from anything
+printable and it stays out of access logs.
+
+```{r}
+req <- req_defaults(
+  httr2::request("https://example.org/v1"),
+  headers = list(Authorization = "Bearer a-real-token")
+)
+any(grepl("a-real-token", capture.output(print(req)), fixed = TRUE))
+```
+
+Some services insist on a key in the query string. `secret_query` attaches it
+at dispatch only, so it is never in the cache key and never in a printed
+request. bioclients uses it for `NCBI_API_KEY` on ClinVar.
+
+```r
+get_json(
+  "https://eutils.ncbi.nlm.nih.gov/entrez/eutils",
+  path = "esearch.fcgi",
+  query = list(db = "clinvar", term = "BRCA1"),
+  source = "ClinVar",
+  secret_query = list(api_key = Sys.getenv("NCBI_API_KEY"))
+)
+```
+
+## 12. Writing a client
+
+A client is a thin function per endpoint: assemble, call, parse. There is no
+error handling in it, because there is nothing to handle.
+
+```{r}
+mygene_query <- function(symbol, species = "human") {
+  res <- get_json(
+    "https://mygene.info/v3",
+    path = "query",
+    query = list(q = symbol, species = species),
+    source = "MyGene"
+  )
+  if (!res$ok) {
+    return(res)
+  }
+  status_ok(
+    data = pluck_at(res$data, "hits", default = list()),
+    source = "MyGene",
+    http = res$http
+  )
+}
+```
+
+Two things to copy. Pass `source`, so the message says "MyGene is
+temporarily unavailable" rather than "API is temporarily unavailable". And
+return an envelope, not a bare value, so the caller can keep branching.
+
+Test it offline. One mocked 503 is enough to prove the client passes a
+failure through instead of hiding it.
+
+```{r}
+httr2::with_mocked_responses(
+  list(httr2::response(status_code = 503)),
+  mygene_query("BRCA1")$status
+)
+```
+
+```{r}
+#| include: false
+fake$stop()
+```
+
+## What to take away
+
+- One rule: a call returns a value. Branch on `status`, show `error`, log
+  `detail`.
+- Seven statuses. `no_data` and `skipped` are answers, not faults.
+- Only a transport failure trips the breaker. A 500 proves the host is up.
+- Successes are cached, failures never. With the disk tier and a fixed salt,
+  a warmed cache replays a whole demo offline.
+- Batch many questions to one host, pass a throttle, and read
+  `transport_stats()` to see what actually went out.
+
+Docs: <https://www.samuelbharti.com/biohttp/>. CRAN has 0.1.2; the batched
+retry, `retry_after` and `transport_stats()` shown here are 0.1.3, from
+`install.packages("biohttp", repos = "https://samuelbharti.r-universe.dev")`.

@@ -1,0 +1,237 @@
+---
+title: "Validate, fetch, annotate"
+subtitle: "Eleven gene symbols, one table, run twice, then with the plug pulled"
+---
+
+```{r}
+#| label: setup
+#| message: false
+source(here::here("R", "demo-env.R"))
+source(here::here("R", "demo-calls.R"))
+library(biobouncer)
+library(biohttp)
+library(bioclients)
+library(dplyr)
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+This is the whole pipeline the three packages exist for: a messy list of
+gene symbols in, one annotated table out. It runs from the cache committed
+with this repo, so it works with the network off, and the second half is
+about proving that.
+
+## 1. Time zero
+
+Write down what you are running against before you run it.
+
+```{r}
+transport_stats_reset()
+snap <- biobouncer_snapshots()
+snap[snap$source == "hgnc", ]
+c(biobouncer = as.character(packageVersion("biobouncer")),
+  biohttp = as.character(packageVersion("biohttp")),
+  bioclients = as.character(packageVersion("bioclients")))
+```
+
+## 2. The input
+
+Eleven rows. Two retired symbols, a UniProt entry name pasted into a gene
+column, one blank, one mixed case, and one that trips a scoring trap
+downstream.
+
+```{r}
+genes <- read.csv("data/genes.csv", stringsAsFactors = FALSE, na.strings = "")
+genes
+```
+
+## 3. Gate
+
+`cache` mode checks every symbol against the dated HGNC snapshot. A retired
+symbol gets its successor as a suggestion. `TP53_HUMAN` gets nothing, because
+nothing in the snapshot is close enough to vouch for.
+
+One caution before accepting suggestions blindly: in `cache` mode a near miss
+such as `TP35` gets a fuzzy suggestion (`API5`), and a fuzzy match is a guess
+for a human to review, not a repair. For this input every suggestion is a
+retired-symbol successor, so the gate takes them.
+
+```{r}
+chk <- check_id(genes$symbol, "hgnc", how = "cache")
+chk[, c("input", "valid", "normalized", "suggestion")]
+genes$clean <- ifelse(chk$valid, chk$normalized, chk$suggestion)
+genes$gate <- case_when(
+  is.na(genes$symbol) ~ "missing",
+  chk$valid ~ "valid",
+  !is.na(chk$suggestion) ~ "repaired",
+  TRUE ~ "rejected"
+)
+genes
+```
+
+Nine symbols go on. `TP53_HUMAN` and the blank stop here, before a single
+request is spent on them.
+
+```{r}
+symbols <- genes$clean[!is.na(genes$clean)]
+symbols
+```
+
+## 4. Resolve
+
+One POST resolves all nine to Ensembl, Entrez and UniProt ids. `TTN` comes
+back as TTN, not TTR, because the client prefers an exact symbol match over
+MyGene's score.
+
+```{r}
+ids <- mygene_genes(symbols)
+ids$status
+ids$data[, c("symbol", "name", "entrez", "ensembl_gene", "uniprot")]
+```
+
+## 5. Annotate, batched
+
+gnomAD constraint for all nine, through GraphQL aliases, in one request.
+
+```{r}
+cons <- gnomad_constraints(symbols)
+cons$status
+cons$data[, c("symbol", "pli", "loeuf", "mis_z")]
+```
+
+## 6. Annotate, one call per gene
+
+Open Targets takes the Ensembl id. This is nine single calls, each its own
+envelope, so a failure on one gene is one row of `NA` and a status you can
+see, not an exception that stops the loop.
+
+```{r}
+ensembl <- ids$data$ensembl_gene
+ot <- lapply(ensembl, function(id) opentargets_gene_diseases(id, size = 3))
+top <- tibble(
+  symbol = ids$data$symbol,
+  ot_status = vapply(ot, function(r) r$status, character(1)),
+  top_disease = vapply(ot, function(r) {
+    if (isTRUE(r$ok)) r$data$disease[1] else NA_character_
+  }, character(1)),
+  ot_score = vapply(ot, function(r) {
+    if (isTRUE(r$ok)) r$data$score[1] else NA_real_
+  }, numeric(1))
+)
+top
+```
+
+## 7. One table
+
+Join everything back onto the original eleven rows. The input order is kept
+end to end, and the rows the gate rejected are still there, with their
+reason, so the person who pasted `TP53_HUMAN` finds out.
+
+```{r}
+result <- genes |>
+  left_join(
+    ids$data |> select(clean = symbol, name, entrez, ensembl_gene),
+    by = "clean"
+  ) |>
+  left_join(
+    cons$data |> select(clean = symbol, pli, loeuf),
+    by = "clean"
+  ) |>
+  left_join(top |> rename(clean = symbol), by = "clean")
+result |> select(symbol, gate, clean, entrez, pli, loeuf, top_disease, ot_status)
+```
+
+## 8. What went over the wire
+
+`transport_stats()` counts the batched path: MyGene and gnomAD. The nine
+Open Targets calls went through the single call path, which the counter does
+not see, so they are absent here rather than zero. From the warmed cache,
+nothing was dispatched at all.
+
+```{r}
+transport_stats()
+```
+
+## 9. Run it again
+
+Time the resolve and annotate steps on a second pass. Same tables, and the
+whole thing takes a fraction of a second, because not one request leaves the
+process.
+
+```{r}
+elapsed <- system.time({
+  ids2 <- mygene_genes(symbols)
+  cons2 <- gnomad_constraints(symbols)
+  ot2 <- lapply(ensembl, function(id) opentargets_gene_diseases(id, size = 3))
+})[["elapsed"]]
+elapsed
+identical(ids$data, ids2$data)
+identical(cons$data, cons2$data)
+transport_stats()
+```
+
+That is the reproducibility story in three lines. The cache stores only
+successes, it is keyed on the exact request, and it lives in a directory you
+can commit. Someone who clones this repo gets the same table without a
+network.
+
+## 10. Pull the plug
+
+Now MyGene goes down. The breaker is tripped by hand here, three transport
+failures recorded against the host, which is what three refused connections
+would do on their own. The request has to be one the cache does not hold, so
+one more gene is added to the list.
+
+```{r}
+for (i in 1:3) breaker_record("mygene.info", reachable = FALSE)
+breaker_open("mygene.info")
+down <- mygene_genes(c(symbols, "ABL1"))
+down$status
+down$error
+```
+
+Nothing was sent, nothing crashed, and the table still builds. The gene
+columns from MyGene are `NA` for this run and the status column says why.
+
+```{r}
+resolved <- if (isTRUE(down$ok)) down$data else tibble(symbol = c(symbols, "ABL1"))
+tibble(symbol = c(symbols, "ABL1")) |>
+  left_join(resolved, by = "symbol") |>
+  mutate(mygene_status = down$status) |>
+  select(symbol, any_of(c("entrez", "ensembl_gene")), mygene_status)
+```
+
+The breaker heals after its cooldown. For the next section, reset it now.
+
+```{r}
+breaker_reset()
+breaker_open("mygene.info")
+```
+
+## 11. Write it down
+
+The methods paragraph writes itself from what the packages already know.
+
+```{r}
+cat(sprintf(
+  "Symbols were validated against HGNC snapshot %s with biobouncer %s. Gene ids were resolved through MyGene.info and constraint scores fetched from gnomAD v4 through bioclients %s on biohttp %s. Responses were cached on %s.\n",
+  snap$version[snap$source == "hgnc" & snap$version != "sample"][1],
+  packageVersion("biobouncer"),
+  packageVersion("bioclients"),
+  packageVersion("biohttp"),
+  format(file.mtime(list.files(cache_dir, full.names = TRUE))[1], "%Y-%m-%d")
+))
+```
+
+```{r}
+length(list.files(cache_dir, pattern = "\\.rds$"))
+```
+
+## What to take away
+
+- Gate first. Two of eleven inputs never cost a request.
+- Repair, do not drop. `MLL` and `CARS` became `KMT2A` and `CARS1` and went
+  on to be annotated.
+- One row per input, in input order, at every step, so the final join is
+  trivial and honest.
+- A second run is free and identical.
+- An outage is a status in a column, not a crash.

@@ -1,0 +1,222 @@
+---
+title: "bioclients: 29 services, one shape"
+subtitle: "Look up genes, variants and proteins without writing a client per service"
+---
+
+```{r}
+#| label: setup
+#| message: false
+source(here::here("R", "demo-env.R"))
+library(bioclients)
+library(biohttp)
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+packageVersion("bioclients")
+```
+
+Four apps in the same family had four gnomAD clients. They disagreed with
+each other about chunk sizes, about what a missing gene looks like, and about
+what happens when the service is down. bioclients is those clients written
+once, on top of biohttp, so every one of them returns the same envelope and
+the same shape of table.
+
+Every call here is served from the disk cache committed with this repo, so
+the document renders with the network off. See the biohttp tutorial for why
+that works.
+
+## 1. Installing
+
+bioclients is not on CRAN yet. The package lives in the `pkg-r` folder of
+its repo, and that suffix is mandatory.
+
+```r
+pak::pak("samuelbharti/bioclients/pkg-r")
+# or
+install.packages("bioclients", repos = "https://samuelbharti.r-universe.dev")
+```
+
+## 2. One gene, one envelope
+
+```{r}
+res <- mygene_gene("TP53")
+res$status
+body_or_null(res)
+```
+
+It is a biohttp envelope. `status`, `error`, `detail`, `data`. Nothing new to
+learn per service, which is the whole point of 29 of them sharing a
+transport.
+
+## 3. Nothing found is an answer
+
+A symbol that resolves to nothing comes back `no_data`. The service was
+reached and said so. That is different from the service being down, and the
+status keeps the two apart.
+
+```{r}
+none <- mygene_gene("NOTAREALGENE123")
+none$status
+none$error
+```
+
+## 4. Batch: one row per input, in input order
+
+The batch POST is the reason this client is worth installing. Three symbols
+is one round trip, not three, and the round trip is where the time goes.
+
+```{r}
+batch <- mygene_genes(c("TP53", "NOTAREALGENE123", "BRAF"))
+batch$status
+batch$data[, c("symbol", "name", "entrez", "ensembl_gene", "uniprot")]
+```
+
+The middle row is `NA`, not missing. A table with two rows would silently
+shift BRAF onto the second input, and every join downstream would be wrong.
+Every batch function in the package keeps this contract.
+
+## 5. The scoring trap
+
+MyGene ranks hits by a score that can put an alias of a different gene above
+the exact symbol. Query `TTN` with alias scopes on and TTR scores higher.
+`mygene_pick_hit()` prefers an exact symbol match and only falls back to the
+score when there is none.
+
+```{r}
+hits <- list(
+  list(symbol = "TTR", entrezgene = "7276", `_score` = 19.07),
+  list(symbol = "TTN", entrezgene = "7273", `_score` = 18.29)
+)
+mygene_pick_hit(hits, "TTN")$entrezgene
+```
+
+Traps like this are written down in the source with the date they were
+verified, and pinned by a test. You inherit the fix instead of finding the
+bug.
+
+## 6. Client half, parser half
+
+Every service module is two functions. The client builds the request, calls
+biohttp and returns the envelope. The parser takes an already parsed body
+and returns a tibble. The parser is pure, so it is tested offline against a
+stored response body, and so can yours be.
+
+```{r}
+body <- jsonlite::fromJSON("fixtures/mygene_tp53.json", simplifyVector = FALSE)
+mygene_parse_hits(body, "TP53")
+```
+
+`simplifyVector = FALSE` matters. The parsers expect the nested list shape
+biohttp produces, not the data frames jsonlite guesses at.
+
+```{r}
+body <- jsonlite::fromJSON("fixtures/gnomad_constraint_braf.json", simplifyVector = FALSE)
+gnomad_parse_constraint(body, "BRAF")
+```
+
+An empty body is `NULL`, which the client turns into `no_data`.
+
+```{r}
+reactome_parse_pathways(list())
+```
+
+The package ships 57 such fixtures under `tests/testthat/fixtures/`. The
+whole suite runs without a network.
+
+## 7. GraphQL, batched through aliases
+
+gnomAD is GraphQL. Its limit is a query cost, not a request count, and the
+verified ceiling is 25 aliases per query. The client chunks at 20 for
+headroom and sends one request per chunk.
+
+```{r}
+transport_stats_reset()
+cons <- gnomad_constraints(c("BRAF", "TP53", "EGFR"))
+cons$data[, c("symbol", "pli", "loeuf", "mis_z")]
+```
+
+`transport_stats()` shows what the batched path sent. From the warmed cache,
+nothing.
+
+```{r}
+transport_stats()
+```
+
+A GraphQL error arrives inside an HTTP 200, so a 2xx is not enough. Every
+GraphQL client here runs `biohttp::graphql_error()` on the response before
+parsing it.
+
+## 8. Throttles are hard coded where they were verified
+
+NCBI allows 3 requests per second, or 10 with an API key. VEP asks for 1 per
+second. ClinGen was measured at 3. Each client carries its own default, so a
+caller who has not read the service documentation still behaves.
+
+```{r}
+vep_default_throttle()
+bioclients:::clinvar_throttle()
+```
+
+`clinvar_throttle()` is internal, which is the point: the ClinVar client
+applies it by default and nobody has to remember the number.
+
+The key itself is attached at dispatch through `secret_query`, which keeps
+it out of the cache key and out of any printed request.
+
+```r
+clinvar_classification("NM_000546.6:c.524G>A")
+# throttle = clinvar_throttle(), secret_query = list(api_key = NCBI_API_KEY)
+```
+
+None of those three is called in this document. They are slow by design,
+and the point is made by the numbers.
+
+## 9. Chaining sources
+
+Open Targets takes an Ensembl id, not a symbol, because that is what its API
+accepts. Resolve the symbol first. The client does not do that for you,
+deliberately: a client that silently made a second call to a different
+service would make a MyGene outage look like an Open Targets outage.
+
+```{r}
+acc <- res$data$uniprot
+acc
+dis <- uniprot_diseases(acc)
+dis$status
+dis$data[, c("name", "acronym", "mim", "causal")]
+```
+
+`causal` is read from the note text. "The disease is caused by variants
+affecting the gene" is a Mendelian claim; "may be involved in the
+pathogenesis" is not. Both arrive as disease comments, and collapsing them
+would promote a hunch to a diagnosis.
+
+Reactome takes the symbol directly and answers with a bare JSON array, which
+a parser reaching for a `results` key would misread as "no pathways".
+
+```{r}
+paths <- reactome_pathways("NF1")
+paths$status
+head(paths$data[, c("pathway_id", "name", "in_disease")])
+```
+
+## 10. Testing a wrapper of your own
+
+If you wrap a bioclients call in a function of your own, one mocked 503 is
+enough to prove it passes the failure through instead of hiding it.
+
+```{r}
+httr2::with_mocked_responses(
+  list(httr2::response(status_code = 503)),
+  mygene_gene("BRCA1")$status
+)
+```
+
+## What to take away
+
+- 29 services, one envelope, one table shape per service, one row per input.
+- Client half fetches, parser half is pure. Test the parser on a fixture.
+- Batch functions never drop a row. A miss is an `NA` row in place.
+- Verified limits and traps are in the source with dates. You inherit them.
+- No Shiny dependency, on purpose. The app is the caller.
+
+Docs: <https://www.samuelbharti.com/bioclients/>. Not on CRAN yet;
+install from r-universe or with `pak::pak("samuelbharti/bioclients/pkg-r")`.

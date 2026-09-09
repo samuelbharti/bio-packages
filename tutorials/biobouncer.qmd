@@ -1,0 +1,273 @@
+---
+title: "biobouncer: a gate for biological inputs"
+subtitle: "Validate gene symbols, ontology terms and accessions before they reach a tool"
+---
+
+```{r}
+#| label: setup
+#| message: false
+source(here::here("R", "demo-env.R"))
+library(biobouncer)
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+packageVersion("biobouncer")
+```
+
+Every bioinformatics app I have written had a function somewhere called
+`is_gene()` or `looks_like_mondo()`. Each one was a regex written in a hurry.
+Each one was slightly different from the one in the previous app. None of
+them knew that `MLL` was renamed `KMT2A` in 2013.
+
+biobouncer is one small API that answers "is this an identifier, and if not,
+what did the user probably mean?" for 50 sources. It gives the same answer in
+R, Python and JavaScript because all three are tested against one shared
+corpus. It does not fetch annotation. It runs before anything that does.
+
+## 1. The regex you already have
+
+Here is the kind of check that lives in most apps. It does two things wrong
+in one line.
+
+```{r}
+is_gene <- function(x) grepl("^[A-Z0-9-]+$", x)
+is_gene(c("MLL", "KMT2A", "mondo:5148"))
+```
+
+`MLL` passes, and it is a retired symbol. `mondo:5148` fails, and it is one
+uppercase and three zeros away from a real disease id. The regex knows the
+shape and nothing else.
+
+## 2. Discover what can be checked
+
+```{r}
+srcs <- sources()
+length(srcs)
+head(srcs, 12)
+```
+
+`source_info()` is the registry as a table: a valid example for each source,
+the modes it supports, and whether it is species or version aware. You never
+have to invent an example id.
+
+```{r}
+info <- source_info()
+info[info$key %in% c("hgnc", "mondo", "go", "ensembl", "uniprot", "hgvs"), ]
+```
+
+Four modes, from cheapest to most expensive:
+
+| mode | question | network |
+|---|---|---|
+| `pattern` | is the string well formed? | no |
+| `cache` | does the id exist in a pinned snapshot? | no |
+| `remote` | does the id exist right now, in the live source? | yes |
+| `existence` | snapshot first, remote only if there is no snapshot | maybe |
+
+## 3. Snapshots are dated
+
+`cache` mode checks existence against a snapshot. The package bundles a full
+HGNC snapshot and small samples for a few ontologies; everything else is one
+`biobouncer_pull()` away.
+
+```{r}
+biobouncer_snapshots()
+```
+
+The `version` column is the point. A snapshot has a date. When you write down
+which one you checked against, someone can re-run your check in a year and
+get the same verdict.
+
+## 4. Mode `pattern`: shape only, offline
+
+```{r}
+check_id(c("MONDO:0005148", "mondo:5148", "GO:0006915"), source_db = "mondo")
+```
+
+Three things to notice in that table. The lowercase id is invalid but carries
+a `suggestion`, which is what a user meant. The GO term is well formed and is
+still rejected, because it is not a MONDO id. And the result has one row per
+input, in input order, which is what lets it sit next to your data frame.
+
+## 5. Mode `cache`: existence, and repair
+
+A real, messy association table. Retired gene symbols, an obsolete GO term, a
+mis-cased disease id, an id that does not exist, and a blank.
+
+```{r}
+df <- read.csv("data/associations.csv", stringsAsFactors = FALSE, na.strings = "")
+df
+```
+
+`report_id()` runs `check_id()` on a column and prints a one line summary.
+
+```{r}
+cols <- c(gene = "hgnc", disease = "mondo", process = "go")
+for (col in names(cols)) {
+  print(report_id(df[[col]], cols[[col]], how = "cache"))
+}
+```
+
+Look inside the gene report. `MLL` and `CARS` are retired, and the snapshot
+knows their successors.
+
+```{r}
+check_id(df$gene, source_db = "hgnc", how = "cache")
+```
+
+`repair_id()` substitutes every fixable value and leaves the rest alone, so
+it drops into `dplyr::mutate()`.
+
+```{r}
+clean <- df
+clean$gene <- repair_id(df$gene, "hgnc", how = "cache")
+clean$disease <- repair_id(df$disease, "mondo", how = "cache")
+clean$process <- repair_id(df$process, "go", how = "cache")
+clean
+```
+
+`notagene` and `MONDO:9999999` are still there, unchanged, because there is
+nothing honest to replace them with. Repair never invents.
+
+## 6. `pattern` across many sources at once
+
+A second table mixes accessions from six databases. Each row is checked
+against its own source.
+
+```{r}
+ids <- read.csv("data/identifiers.csv", stringsAsFactors = FALSE)
+res <- do.call(rbind, lapply(split(ids, ids$source_db), function(g) {
+  check_id(g$value, source_db = g$source_db[1], how = "pattern")
+}))
+res[, c("input", "source_db", "valid", "normalized", "suggestion")]
+```
+
+One call shape, 50 sources. The HGVS check is a real grammar, not a regex:
+`c.bad` fails for a reason, and so would `c.76insG`, which is missing the
+second position an insertion needs.
+
+## 7. Mode `remote`: live, and never a crash
+
+`remote` asks the source API. With `on_error = "indeterminate"`, an id whose
+check could not complete comes back as an `NA` row with the reason in the
+`error` column, and the rest of the batch still gets checked. No `tryCatch()`
+at the call site. Offline, this chunk still renders.
+
+```{r}
+check_id(
+  "ENSG00000139618",
+  source_db = "ensembl",
+  how = "remote",
+  species = "homo_sapiens",
+  on_error = "indeterminate"
+)
+```
+
+`remote` is also species aware. The same Ensembl id under `mus_musculus`
+would be rejected in `pattern` mode before any network call, because mouse
+ids start with `ENSMUSG`.
+
+## 8. Pin it
+
+The reproducible workflow is: pull a snapshot once, commit the version string
+to your methods, run `cache` mode forever after.
+
+```{r}
+#| eval: false
+biobouncer_pull("mondo")
+biobouncer_snapshots()
+```
+
+Then `check_id(x, "mondo", how = "cache", version = "2026-09-01")` names
+the exact release you validated against.
+
+## 9. Drops into your validation stack
+
+The same verdict through every door. checkmate style:
+
+```{r}
+check_valid_id(c("MONDO:0005148", "mondo:5148"), "mondo")
+test_valid_id(c("MONDO:0005148", "MONDO:0018076"), "mondo")
+```
+
+`assert_valid_id()` throws, which is what you want at the top of a function.
+
+```{r}
+#| error: true
+assert_valid_id(c("MONDO:0005148", "mondo:5148"), "mondo")
+```
+
+An element-wise predicate for assertr, validate, pointblank or a plain
+`Filter()`:
+
+```{r}
+is_hgnc <- id_predicate("hgnc", how = "cache")
+is_hgnc(df$gene)
+df[is_hgnc(df$gene), ]
+```
+
+And a shinyvalidate rule, so a Shiny input cannot fire a lookup on a
+malformed id. The Shiny app in this repo uses this one.
+
+```{r}
+rule <- sv_biobouncer("hgnc", how = "cache")
+rule("TP53")
+rule("notagene")
+```
+
+## 10. Same answer in Python
+
+The Python package is tested against the same corpus, so the verdicts match.
+This section runs through reticulate; if Python biobouncer is not available
+the chunks are skipped and the document still renders.
+
+```{r}
+#| label: py-setup
+#| message: false
+has_py <- tryCatch(
+  {
+    reticulate::py_require("biobouncer==0.2.0", python_version = "3.12")
+    reticulate::py_module_available("biobouncer")
+  },
+  error = function(e) FALSE
+)
+has_py
+```
+
+```{python}
+#| eval: !expr has_py
+import biobouncer as bb
+bb.__version__
+for r in bb.check_id(["MONDO:0005148", "mondo:5148", "GO:0006915"], "mondo"):
+    print(r.input, r.valid, r.normalized, r.suggestion)
+```
+
+The same gene column, the same repair.
+
+```{python}
+#| eval: !expr has_py
+import csv
+with open("data/associations.csv", newline="") as f:
+    genes = [row["gene"] or None for row in csv.DictReader(f)]
+
+rep = bb.report(genes, "hgnc", how="cache")
+print(rep.summary)
+print(rep.repair())
+```
+
+Compare with the R column from section 5: same rows, same suggestions, same
+two values left alone.
+
+```{r}
+clean$gene
+```
+
+## What to take away
+
+- Validate before you fetch. A network call on a malformed id is a wasted
+  call, and a network call on a retired symbol is a wrong answer.
+- `pattern` and `cache` are offline and deterministic. Put them in tests.
+- Snapshots have versions. Write the version down.
+- Repair, do not drop. A user who typed `MLL` meant `KMT2A`.
+- One API, three languages, one corpus.
+
+Docs: <https://www.samuelbharti.com/biobouncer/>. Install with
+`install.packages("biobouncer")` or `pip install biobouncer`.
