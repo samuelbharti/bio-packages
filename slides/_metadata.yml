@@ -1,0 +1,21 @@
+# Shared by every deck in this directory. A deck's own frontmatter only needs
+# title, subtitle and an optional institute line.
+author: "Samuel Bharti"
+format:
+  revealjs:
+    theme: [default, custom.scss]
+    width: 1280
+    height: 720
+    slide-number: c/t
+    embed-resources: true
+    code-line-numbers: false
+    code-copy: false
+    highlight-style: github
+    transition: none
+    progress: true
+    # Keep the PDF page count equal to the slide count, so check-assets.sh can
+    # tell a spilling slide from a fragment.
+    pdf-max-pages-per-slide: 1
+    pdf-separate-fragments: false
+    title-slide-attributes:
+      data-background-color: "#FFFFFF"

@@ -1,0 +1,11 @@
+# Shared by every tutorial. Self-contained HTML, so there is no *_files/ folder
+# to track and a rendered tutorial can be mailed as one file.
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-tools: true
+    code-copy: true
+    embed-resources: true
+    theme: cosmo
+    df-print: paged

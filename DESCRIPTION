@@ -1,0 +1,30 @@
+Package: biopackages.talk
+Type: Project
+Title: Tutorials and Slides for biobouncer, biohttp and bioclients
+Version: 0.1.0
+Description: Not an R package. This file exists so pak::local_install_deps()
+    can install the exact dependency set for the tutorials, decks and app.
+    Run Rscript scripts/setup.R.
+Imports:
+    biobouncer (>= 0.2.0),
+    biohttp (>= 0.1.3),
+    bioclients (>= 0.1.1),
+    shiny (>= 1.14.0),
+    bslib (>= 0.11.0),
+    reticulate (>= 1.46.0),
+    knitr,
+    rmarkdown,
+    here,
+    callr,
+    curl,
+    webfakes,
+    httr2,
+    checkmate,
+    shinyvalidate,
+    shinytest2,
+    jsonlite,
+    tibble,
+    dplyr,
+    reactable,
+    sessioninfo
+Encoding: UTF-8

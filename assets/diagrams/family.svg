@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="420" viewBox="0 0 1100 420" font-family="Open Sans, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#EE6331"/>
+    </marker>
+  </defs>
+  <rect width="1100" height="420" fill="#ffffff"/>
+
+  <!-- caller -->
+  <rect x="80" y="30" width="940" height="80" rx="6" fill="#F2F2F2" stroke="#404041" stroke-width="1.5"/>
+  <text x="550" y="64" text-anchor="middle" font-size="24" font-weight="600" fill="#404041">your Shiny app, script or pipeline</text>
+  <text x="550" y="92" text-anchor="middle" font-size="16" fill="#404041" opacity=".75">branches on a status, never on a condition</text>
+
+  <!-- three boxes -->
+  <g>
+    <rect x="80" y="180" width="280" height="150" rx="6" fill="#ffffff" stroke="#EE6331" stroke-width="3"/>
+    <text x="220" y="222" text-anchor="middle" font-size="26" font-weight="700" fill="#EE6331">biobouncer</text>
+    <text x="220" y="256" text-anchor="middle" font-size="17" fill="#404041">validate the input</text>
+    <text x="220" y="282" text-anchor="middle" font-size="14" fill="#404041" opacity=".75">50 sources, 4 modes, offline first</text>
+    <text x="220" y="306" text-anchor="middle" font-size="14" fill="#404041" opacity=".75">R, Python, JavaScript</text>
+  </g>
+  <g>
+    <rect x="410" y="180" width="280" height="150" rx="6" fill="#ffffff" stroke="#447099" stroke-width="3"/>
+    <text x="550" y="222" text-anchor="middle" font-size="26" font-weight="700" fill="#447099">bioclients</text>
+    <text x="550" y="256" text-anchor="middle" font-size="17" fill="#404041">fetch the annotation</text>
+    <text x="550" y="282" text-anchor="middle" font-size="14" fill="#404041" opacity=".75">29 services, one table shape</text>
+    <text x="550" y="306" text-anchor="middle" font-size="14" fill="#404041" opacity=".75">one row per input, in order</text>
+  </g>
+  <g>
+    <rect x="740" y="180" width="280" height="150" rx="6" fill="#ffffff" stroke="#419599" stroke-width="3"/>
+    <text x="880" y="222" text-anchor="middle" font-size="26" font-weight="700" fill="#419599">biohttp</text>
+    <text x="880" y="256" text-anchor="middle" font-size="17" fill="#404041">move the bytes</text>
+    <text x="880" y="282" text-anchor="middle" font-size="14" fill="#404041" opacity=".75">envelope, cache, breaker,</text>
+    <text x="880" y="306" text-anchor="middle" font-size="14" fill="#404041" opacity=".75">rate limits, batching</text>
+  </g>
+
+  <!-- arrows caller to boxes -->
+  <line x1="220" y1="112" x2="220" y2="176" stroke="#EE6331" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="550" y1="112" x2="550" y2="176" stroke="#EE6331" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <!-- bioclients sits on biohttp -->
+  <line x1="694" y1="255" x2="736" y2="255" stroke="#EE6331" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <text x="715" y="243" text-anchor="middle" font-size="12" fill="#404041" opacity=".7">on</text>
+
+  <!-- labels -->
+  <text x="220" y="372" text-anchor="middle" font-size="15" font-weight="600" fill="#404041">1. is this even an id?</text>
+  <text x="550" y="372" text-anchor="middle" font-size="15" font-weight="600" fill="#404041">2. what does the source say?</text>
+  <text x="880" y="372" text-anchor="middle" font-size="15" font-weight="600" fill="#404041">3. what happened on the wire?</text>
+  <text x="550" y="404" text-anchor="middle" font-size="13" fill="#404041" opacity=".6">biobouncer is a sibling, not a dependency: it validates before either of the others is called</text>
+</svg>

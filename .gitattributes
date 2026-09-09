@@ -1,0 +1,29 @@
+# Normalize line endings to LF in the repository. Working copies on Windows can
+# still use CRLF locally; this keeps what gets committed consistent, and it
+# keeps the bash scripts runnable under Git Bash (a CRLF .sh fails on "\r").
+* text=auto eol=lf
+
+*.R text eol=lf
+*.r text eol=lf
+*.qmd text eol=lf
+*.md text eol=lf
+*.scss text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.csv text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+
+# Binary files: never touch line endings.
+*.rds binary
+*.RData binary
+*.png binary
+*.jpg binary
+*.pdf binary
+*.gz binary
+*.zip binary
+
+# Rendered decks are multi-megabyte self-contained HTML. Diffs are noise.
+slides/*.html -diff

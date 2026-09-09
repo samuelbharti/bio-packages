@@ -1,0 +1,285 @@
+/*-- scss:defaults --*/
+
+// Posit palette, hardcoded rather than read from brand vars so this file works
+// even if brand/theme resolution changes. Same hexes as ../_brand.yml.
+$pblue:   #447099;
+$pteal:   #419599;
+$pgreen:  #72994E;
+$porange: #EE6331;
+$pgrey:   #404041;
+$plight:  #F2F2F2;
+
+$presentation-heading-color: $pgrey;
+$presentation-heading-font-weight: 600;
+$link-color: $pblue;
+
+/*-- scss:rules --*/
+
+.reveal h2 {
+  border-bottom: 3px solid $porange;
+  padding-bottom: .18em;
+  margin-bottom: .55em;
+}
+
+.reveal .slide-number { font-size: .45em; }
+
+// These decks are code heavy. The default code size wastes the slide.
+.reveal pre { margin: .3em 0; box-shadow: none; width: 100%; }
+.reveal pre code {
+  font-size: .62em;
+  line-height: 1.35;
+  padding: .55em .7em;
+  max-height: none;
+}
+.reveal .cell-output pre code { font-size: .55em; }
+
+// A quiet kicker line under a heading, for framing a slide in one clause.
+.reveal .kicker {
+  color: $pgrey;
+  opacity: .75;
+  font-size: .78em;
+  margin-top: -.35em;
+  margin-bottom: .8em;
+}
+
+// The single-sentence payoff line that closes a slide.
+.reveal .payoff {
+  margin-top: .7em;
+  padding-top: .45em;
+  border-top: 1px solid rgba(64, 64, 65, .22);
+  font-size: .82em;
+  color: $pgrey;
+}
+
+// ---------------------------------------------------------------------------
+// .bignums: a row of 2-4 headline numbers. Fenced divs wrap content in <p>, so
+// the first <p> is the number and the second is the label. .zero turns the
+// number orange for the "0 crashes" kind of claim.
+// ---------------------------------------------------------------------------
+.reveal .bignums {
+  display: flex;
+  gap: 1.5em;
+  margin: .15em 0 .55em;
+}
+.reveal .bignums > div > p:first-child {
+  font-size: 1.7em;
+  font-weight: 700;
+  color: $pblue;
+  line-height: 1;
+  margin: 0;
+}
+.reveal .bignums > div > p:last-child {
+  font-size: .5em;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  opacity: .7;
+  margin: .2em 0 0;
+  line-height: 1.2;
+}
+.reveal .bignums .zero > p:first-child { color: $porange; }
+
+// ---------------------------------------------------------------------------
+// .walls: N equal cards, each with a coloured top rule. First <p> is the
+// title, the last is a mono answer line.
+// ---------------------------------------------------------------------------
+.reveal .walls {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: .55em;
+  font-size: .72em;
+}
+.reveal .walls.g2 { grid-template-columns: repeat(2, 1fr); }
+.reveal .walls > div {
+  background: $plight;
+  border-top: 5px solid $pgrey;
+  padding: .55em .6em .7em;
+  border-radius: 0 0 4px 4px;
+}
+.reveal .walls > div > p { margin: 0 0 .3em; line-height: 1.28; }
+.reveal .walls > div > p:first-child { font-weight: 700; color: $pgrey; }
+.reveal .walls > div > p:last-child {
+  font-size: .82em;
+  font-family: "Source Code Pro", monospace;
+  color: $pblue;
+  margin-bottom: 0;
+}
+.reveal .walls .w1 { border-top-color: $porange; }
+.reveal .walls .w2 { border-top-color: $pteal; }
+.reveal .walls .w3 { border-top-color: $pblue; }
+.reveal .walls .w4 { border-top-color: $pgreen; }
+
+// ---------------------------------------------------------------------------
+// .cards: generic card grid, 3 up by default, .c4 for four.
+// ---------------------------------------------------------------------------
+.reveal .cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: .5em;
+  font-size: .66em;
+}
+.reveal .cards.c4 { grid-template-columns: repeat(4, 1fr); font-size: .56em; }
+.reveal .cards > div {
+  background: #fff;
+  border: 1px solid rgba(64, 64, 65, .18);
+  border-left: 4px solid $pblue;
+  padding: .5em .55em;
+  border-radius: 3px;
+}
+.reveal .cards > div > p { margin: 0 0 .28em; line-height: 1.25; }
+.reveal .cards > div > p:first-child { font-weight: 700; }
+.reveal .cards > div > p:last-child { margin-bottom: 0; }
+.reveal .cards .teal { border-left-color: $pteal; }
+.reveal .cards .green { border-left-color: $pgreen; }
+.reveal .cards .orange { border-left-color: $porange; }
+
+// ---------------------------------------------------------------------------
+// .flow: a horizontal box chain with arrows.
+// ---------------------------------------------------------------------------
+.reveal .flow {
+  display: flex;
+  align-items: stretch;
+  gap: .3em;
+  font-size: .62em;
+  margin: .5em 0;
+}
+.reveal .flow > div {
+  flex: 1;
+  background: $plight;
+  border: 1px solid rgba(64, 64, 65, .18);
+  border-radius: 3px;
+  padding: .45em .5em;
+  position: relative;
+}
+.reveal .flow > div + div::before {
+  content: "\2192";
+  position: absolute;
+  left: -.42em;
+  top: 50%;
+  transform: translateY(-50%);
+  color: $porange;
+  font-weight: 700;
+}
+.reveal .flow > div > p { margin: 0 0 .2em; line-height: 1.2; }
+.reveal .flow > div > p:first-child {
+  font-family: "Source Code Pro", monospace;
+  font-weight: 600;
+  color: $pblue;
+  font-size: .9em;
+}
+.reveal .flow > div > p:last-child { margin-bottom: 0; opacity: .85; }
+
+// ---------------------------------------------------------------------------
+// .pills: a strip of short labels. Descendant selectors, not `>`: a fenced div
+// wraps its content in a <p>, so the spans are grandchildren.
+// ---------------------------------------------------------------------------
+.reveal .pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35em;
+  margin: .5em 0;
+}
+.reveal .pills p {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35em;
+  margin: 0;
+}
+.reveal .pills span {
+  background: $pblue;
+  color: #fff;
+  border-radius: 999px;
+  padding: .2em .7em;
+  font-size: .6em;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.reveal .pills span.alt  { background: $pteal; }
+.reveal .pills span.warm { background: $porange; }
+.reveal .pills span.ok   { background: $pgreen; }
+.reveal .pills span.mute { background: $pgrey; }
+.reveal .pills.big span { font-size: .8em; padding: .3em .9em; }
+
+// Access-status chips. Never a link that 404s.
+.reveal .chip {
+  display: inline-block;
+  font-family: "Source Code Pro", monospace;
+  font-size: .8em;
+  font-weight: 600;
+  padding: .05em .45em;
+  border-radius: 3px;
+  color: #fff;
+}
+.reveal .chip.public   { background: $pgreen; }
+.reveal .chip.internal { background: $pblue; }
+.reveal .chip.private  { background: $pgrey; }
+.reveal .chip.wip      { background: $porange; }
+
+// A verbatim quote from source or docs, with attribution.
+.reveal .verbatim {
+  border-left: 4px solid $pteal;
+  color: $pgrey;
+  font-size: .74em;
+  font-style: normal;
+  margin: .5em 0 .3em;
+  padding: .3em 0 .3em .7em;
+  width: auto;
+  box-shadow: none;
+  background: none;
+}
+.reveal .verbatim .src {
+  display: block;
+  font-family: "Source Code Pro", monospace;
+  font-size: .7em;
+  opacity: .6;
+  margin-top: .2em;
+}
+
+// .codepair: two code blocks side by side (R | Python).
+.reveal .codepair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .8em;
+}
+.reveal .codepair pre { margin: 0; }
+.reveal .codepair .lang {
+  font-family: "Source Code Pro", monospace;
+  font-size: .55em;
+  text-transform: uppercase;
+  letter-spacing: .09em;
+  color: $pblue;
+  font-weight: 600;
+  margin-bottom: .25em;
+}
+
+// A logo inlined into an h2.
+.reveal h2 img.titlelogo {
+  height: 1.3em;
+  vertical-align: middle;
+  margin: 0 .3em 0 0;
+  border: none;
+  box-shadow: none;
+}
+
+// Closing slide: three logos in a row.
+.reveal .logorow {
+  display: flex;
+  justify-content: center;
+  gap: 3em;
+  margin-top: 1.5em;
+}
+.reveal .logorow img { height: 200px; border: none; box-shadow: none; }
+
+// Full-slide screenshot with a thin border.
+.reveal .shot img {
+  max-height: 560px;
+  width: auto;
+  display: block;
+  margin: 0 auto;
+  border: 1px solid rgba(64, 64, 65, .25);
+  border-radius: 3px;
+}
+
+.reveal ul { margin-bottom: .3em; }
+.reveal ul li { margin-bottom: .18em; line-height: 1.3; }
+.reveal .smallish { font-size: .78em; }
+.reveal table { font-size: .6em; }

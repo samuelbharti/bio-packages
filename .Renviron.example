@@ -1,0 +1,12 @@
+# Copy to .Renviron (gitignored) only if you need one of these. The tutorials,
+# the app and the scripts set every BIOHTTP_CACHE_* variable themselves in
+# R/demo-env.R, so nothing here is required for the demo.
+
+# Optional: raises the ClinVar limit from 3 to 10 requests per second.
+# Never committed. bioclients attaches it at dispatch only.
+# NCBI_API_KEY=
+
+# Optional: identifies you to services that ask for a contact. Not used by
+# any live call in this project, but bioclients folds it into E-utilities
+# URLs, so set it once and keep it stable.
+# BIOHTTP_CONTACT_EMAIL=

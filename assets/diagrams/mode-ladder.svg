@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="300" viewBox="0 0 1100 300" font-family="Open Sans, Helvetica, Arial, sans-serif">
+  <rect width="1100" height="300" fill="#ffffff"/>
+
+  <g font-size="15" fill="#404041">
+    <rect x="40" y="60" width="230" height="150" rx="6" fill="#ffffff" stroke="#72994E" stroke-width="3"/>
+    <text x="155" y="98" text-anchor="middle" font-family="Source Code Pro, Consolas, monospace" font-size="22" font-weight="700" fill="#72994E">pattern</text>
+    <text x="155" y="130" text-anchor="middle">is it well formed?</text>
+    <text x="155" y="154" text-anchor="middle" font-size="13" opacity=".75">regex or grammar</text>
+    <text x="155" y="190" text-anchor="middle" font-size="13" font-weight="600" fill="#72994E">offline</text>
+
+    <rect x="300" y="60" width="230" height="150" rx="6" fill="#ffffff" stroke="#72994E" stroke-width="3"/>
+    <text x="415" y="98" text-anchor="middle" font-family="Source Code Pro, Consolas, monospace" font-size="22" font-weight="700" fill="#72994E">cache</text>
+    <text x="415" y="130" text-anchor="middle">does it exist?</text>
+    <text x="415" y="154" text-anchor="middle" font-size="13" opacity=".75">against a dated snapshot</text>
+    <text x="415" y="190" text-anchor="middle" font-size="13" font-weight="600" fill="#72994E">offline</text>
+
+    <rect x="560" y="60" width="230" height="150" rx="6" fill="#ffffff" stroke="#EE6331" stroke-width="3"/>
+    <text x="675" y="98" text-anchor="middle" font-family="Source Code Pro, Consolas, monospace" font-size="22" font-weight="700" fill="#EE6331">remote</text>
+    <text x="675" y="130" text-anchor="middle">does it exist right now?</text>
+    <text x="675" y="154" text-anchor="middle" font-size="13" opacity=".75">the live source API</text>
+    <text x="675" y="190" text-anchor="middle" font-size="13" font-weight="600" fill="#EE6331">online</text>
+
+    <rect x="820" y="60" width="230" height="150" rx="6" fill="#ffffff" stroke="#447099" stroke-width="3"/>
+    <text x="935" y="98" text-anchor="middle" font-family="Source Code Pro, Consolas, monospace" font-size="22" font-weight="700" fill="#447099">existence</text>
+    <text x="935" y="130" text-anchor="middle">snapshot first,</text>
+    <text x="935" y="154" text-anchor="middle" font-size="13" opacity=".75">remote only without one</text>
+    <text x="935" y="190" text-anchor="middle" font-size="13" font-weight="600" fill="#447099">either</text>
+  </g>
+
+  <line x1="40" y1="245" x2="1050" y2="245" stroke="#404041" stroke-width="1.5"/>
+  <text x="40" y="275" font-size="13" fill="#404041" opacity=".7">cheapest, deterministic, belongs in tests</text>
+  <text x="1050" y="275" text-anchor="end" font-size="13" fill="#404041" opacity=".7">most expensive, needs a network</text>
+</svg>

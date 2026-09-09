@@ -1,0 +1,36 @@
+project:
+  type: default
+  # Chunks and here::here() resolve from the repo root, so tutorials, scripts
+  # and the app all see the same data/ and .cache/ paths.
+  execute-dir: project
+  render:
+    - slides/main.qmd # decks first, always: they are the blocking deliverable
+    - slides/biobouncer.qmd
+    - slides/biohttp.qmd
+    - slides/bioclients.qmd
+    - tutorials/biobouncer.qmd
+    - tutorials/biohttp.qmd
+    - tutorials/bioclients.qmd
+    - tutorials/pipeline.qmd
+
+brand: _brand.yml
+
+# knitr everywhere, including the python chunks in tutorials/biobouncer.qmd,
+# which run through reticulate. This keeps Quarto away from the system Jupyter
+# kernels, which are not part of this project.
+engine: knitr
+
+execute:
+  freeze: auto
+  cache: false
+  echo: true
+  warning: true
+  message: false
+
+# NOTE: deliberately NO top-level `format:` key. A top-level format would try to
+# apply html defaults to the revealjs decks. Formats live in slides/_metadata.yml
+# and tutorials/_metadata.yml instead.
+#
+# NOTE: type is `default`, NOT `website`. `default` writes output next to the
+# input, so `assets/` is already in the right place. A website project would
+# move the decks to `_site/` and inject navbar partials into a reveal document.

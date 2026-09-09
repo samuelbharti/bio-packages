@@ -1,0 +1,53 @@
+# Quarto
+/.quarto/
+/_freeze/
+*_files/
+/_site/
+**/*.quarto_ipynb
+
+# Rendered tutorials are not shipped. Render them with scripts/render-tutorials.sh.
+tutorials/*.html
+
+# ---------------------------------------------------------------------------
+# Deliberate exceptions, tracked on purpose:
+#   slides/*.html and slides/*.pdf   the decks are the deliverable; a clone on a
+#                                    borrowed laptop must be presentable at once
+#   .cache/biohttp/                  the warmed biohttp disk cache that lets the
+#                                    tutorials and the app replay offline
+# ---------------------------------------------------------------------------
+
+# R
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+*.Rcheck/
+
+# Secrets and local config. .Renviron.example is the documented template.
+.Renviron
+.env
+.env.*
+*.key
+*.pem
+credentials*
+secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.ruff_cache/
+uv.lock
+
+# Shiny deploy metadata
+app/rsconnect/
+
+# Working notes and plans live here and never leave the machine
+docs/local/
+
+# Transient
+*.part
+*.tmp
+.DS_Store
+Thumbs.db
